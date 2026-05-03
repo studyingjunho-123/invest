@@ -4,7 +4,7 @@ import yfinance as yf
 
 st.set_page_config(page_title="AI 투자 리서치 터미널", page_icon="📈")
 
-PASSWORD = "7856"  # 원하는 비밀번호로 변경
+PASSWORD = "7856"  # 원하는 비밀번호로 바꾸기
 
 st.title("📈 AI 투자 리서치 터미널")
 
@@ -18,10 +18,10 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 menu = st.radio(
     "기능 선택",
-    ["1. 오늘 경제 이슈 분석", "2. 투자 리포트 제작", "3. 개인 종목 주가 데이터"],
+    ["1. 오늘 경제 이슈 분석", "2. 투자 리포트 제작", "3. 기업 검색/주가 데이터"],
 )
 
-# 1번
+# 1번: 오늘 경제 이슈 분석
 if menu == "1. 오늘 경제 이슈 분석":
     st.subheader("🌅 오늘 경제 이슈 분석")
 
@@ -42,17 +42,18 @@ if menu == "1. 오늘 경제 이슈 분석":
 
 주의:
 - 확인되지 않은 루머는 단정하지 말 것
-- 투자 추천처럼 쓰지 말 것
+- 확정적인 투자 추천처럼 쓰지 말 것
+- 날짜 기준을 명확히 할 것
 """
             )
             st.write(response.output_text)
 
-# 2번
+# 2번: 투자 리포트 제작
 elif menu == "2. 투자 리포트 제작":
     st.subheader("📊 경제 이슈 기반 투자 리포트")
 
     issue = st.text_area("경제 이슈 입력", placeholder="예: 미국 금리 인하 가능성 증가")
-    stocks = st.text_input("관련 종목 입력", placeholder="예: 삼성전자, SK하이닉스")
+    stocks = st.text_input("관련 종목 입력", placeholder="예: 삼성전자, SK하이닉스, 엔비디아")
     period = st.selectbox("투자 기간", ["단기", "중기", "장기"])
     style = st.selectbox("리포트 스타일", ["간단 요약", "자세한 분석", "고등학생 이해용"])
 
@@ -91,47 +92,89 @@ elif menu == "2. 투자 리포트 제작":
                     model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}],
                 )
+
                 st.write(response.choices[0].message.content)
 
-# 3번
-elif menu == "3. 개인 종목 주가 데이터":
-    st.subheader("📈 개인 종목 주가 데이터")
+# 3번: 기업 검색/주가 데이터
+elif menu == "3. 기업 검색/주가 데이터":
+    st.subheader("📈 기업 검색/주가 데이터")
 
-    ticker = st.text_input(
-        "종목 코드 입력",
-        placeholder="예: 삼성전자 005930.KS / SK하이닉스 000660.KS / 엔비디아 NVDA",
+    stock_input = st.text_input(
+        "기업명 또는 티커 검색",
+        placeholder="예: 삼성전자 / 엔비디아 / NVDA / 005930.KS",
     )
 
     period = st.selectbox("조회 기간", ["1mo", "3mo", "6mo", "1y", "5y"])
 
+    ticker = None
+
+    if st.button("티커 검색"):
+        if not stock_input.strip():
+            st.error("기업명 또는 티커를 입력해줘.")
+        else:
+            with st.spinner("티커 검색 중..."):
+                try:
+                    search = yf.Search(stock_input.strip(), max_results=10)
+                    quotes = search.quotes
+
+                    if not quotes:
+                        st.error("검색 결과가 없어. 티커를 직접 입력해봐.")
+                    else:
+                        st.session_state["quotes"] = quotes
+                except Exception as e:
+                    st.error("티커 검색 중 오류가 발생했어.")
+                    st.code(str(e))
+
+    if "quotes" in st.session_state:
+        options = []
+
+        for q in st.session_state["quotes"]:
+            symbol = q.get("symbol", "")
+            name = q.get("shortname") or q.get("longname") or ""
+            exchange = q.get("exchange", "")
+            quote_type = q.get("quoteType", "")
+            options.append(f"{symbol} | {name} | {exchange} | {quote_type}")
+
+        selected = st.selectbox("검색 결과에서 선택", options)
+        ticker = selected.split(" | ")[0]
+
+    direct_ticker = st.text_input(
+        "또는 티커 직접 입력",
+        placeholder="예: 005930.KS / NVDA / TSLA",
+    )
+
+    if direct_ticker.strip():
+        ticker = direct_ticker.strip()
+
     if st.button("주가 데이터 조회"):
-        if not ticker.strip():
-            st.error("종목 코드를 입력해줘.")
+        if not ticker:
+            st.error("먼저 티커를 검색해서 선택하거나 직접 입력해줘.")
         else:
             with st.spinner("주가 데이터 불러오는 중..."):
-                data = yf.download(ticker, period=period)
+                try:
+                    data = yf.download(ticker, period=period, progress=False)
 
-                if data.empty:
-                    st.error("데이터를 불러오지 못했어. 종목 코드를 다시 확인해줘.")
-                else:
-                    st.write(f"### {ticker} 주가 차트")
-                    st.line_chart(data["Close"])
+                    if data.empty:
+                        st.error("데이터를 불러오지 못했어. 티커를 다시 확인해줘.")
+                    else:
+                        st.write(f"### {ticker} 주가 차트")
+                        st.line_chart(data["Close"])
 
-                    first_price = float(data["Close"].iloc[0])
-                    last_price = float(data["Close"].iloc[-1])
-                    high_price = float(data["Close"].max())
+                        first_price = float(data["Close"].iloc[0])
+                        last_price = float(data["Close"].iloc[-1])
+                        high_price = float(data["Close"].max())
 
-                    return_rate = (last_price - first_price) / first_price * 100
-                    drawdown = (last_price - high_price) / high_price * 100
+                        return_rate = (last_price - first_price) / first_price * 100
+                        drawdown = (last_price - high_price) / high_price * 100
 
-                    st.write("### 핵심 지표")
-                    st.write(f"- 기간 첫 종가: {first_price:.2f}")
-                    st.write(f"- 최근 종가: {last_price:.2f}")
-                    st.write(f"- 기간 수익률: {return_rate:.2f}%")
-                    st.write(f"- 고점 대비 하락률: {drawdown:.2f}%")
+                        st.write("### 핵심 지표")
+                        st.write(f"- 기간 첫 종가: {first_price:.2f}")
+                        st.write(f"- 최근 종가: {last_price:.2f}")
+                        st.write(f"- 기간 수익률: {return_rate:.2f}%")
+                        st.write(f"- 고점 대비 하락률: {drawdown:.2f}%")
 
-                    if st.button("이 주가 흐름 AI 해석"):
-                        prompt = f"""
+                        if st.button("이 주가 흐름 AI 해석"):
+                            prompt = f"""
 다음 종목의 주가 흐름을 투자 리서치 관점에서 해석해줘.
 
 종목 코드: {ticker}
@@ -150,8 +193,13 @@ elif menu == "3. 개인 종목 주가 데이터":
 
 단, 확정적인 매수/매도 추천은 하지 마.
 """
-                        response = client.chat.completions.create(
-                            model="gpt-4o-mini",
-                            messages=[{"role": "user", "content": prompt}],
-                        )
-                        st.write(response.choices[0].message.content)
+                            response = client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[{"role": "user", "content": prompt}],
+                            )
+
+                            st.write(response.choices[0].message.content)
+
+                except Exception as e:
+                    st.error("주가 데이터를 불러오는 중 오류가 발생했어.")
+                    st.code(str(e))
