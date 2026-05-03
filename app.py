@@ -1,6 +1,7 @@
 import streamlit as st
 from openai import OpenAI
 import yfinance as yf
+from datetime import datetime
 
 st.set_page_config(page_title="AI 투자 리서치 터미널", page_icon="📈")
 
@@ -26,26 +27,38 @@ if menu == "1. 오늘 경제 이슈 분석":
     st.subheader("🌅 오늘 경제 이슈 분석")
 
     if st.button("오늘 주요 경제 이슈 보기"):
-        with st.spinner("경제 이슈 확인 중..."):
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        with st.spinner("최신 경제 이슈 확인 중..."):
             response = client.responses.create(
                 model="gpt-4o-mini",
                 tools=[{"type": "web_search"}],
-                input="""
-오늘 기준 주요 경제 이슈를 5개 이내로 정리해줘.
+                input=f"""
+오늘 날짜는 {today}야.
+
+반드시 {today} 기준으로 최근 24~48시간 안에 나온 경제 이슈만 정리해줘.
+출처 날짜가 오늘 또는 어제인 이슈만 포함해.
+2025년, 2024년 등 과거 기사는 제외해.
+각 이슈마다 날짜를 함께 써줘.
+
+만약 최신성이 확실하지 않으면 "최신성 확인 불가"라고 표시해.
 
 형식:
 1. 이슈 제목
-- 핵심 내용
-- 한국 시장 영향
-- 미국 시장 영향
-- 확인할 지표
+- 날짜:
+- 핵심 내용:
+- 한국 시장 영향:
+- 미국 시장 영향:
+- 확인할 지표:
 
 주의:
+- 오래된 기사를 오늘 이슈처럼 쓰지 말 것
 - 확인되지 않은 루머는 단정하지 말 것
 - 확정적인 투자 추천처럼 쓰지 말 것
-- 날짜 기준을 명확히 할 것
+- 한국 시장과 미국 시장 영향을 구분해서 설명할 것
 """
             )
+
             st.write(response.output_text)
 
 # 2번: 투자 리포트 제작
@@ -122,7 +135,7 @@ elif menu == "3. 기업 검색/주가 데이터":
                     else:
                         st.session_state["quotes"] = quotes
                 except Exception as e:
-                    st.error("티커 검색 중 오류가 발생했어.")
+                    st.error("티커 검색 중 오류가 발생했어. 직접 티커 입력을 사용해줘.")
                     st.code(str(e))
 
     if "quotes" in st.session_state:
@@ -140,7 +153,7 @@ elif menu == "3. 기업 검색/주가 데이터":
 
     direct_ticker = st.text_input(
         "또는 티커 직접 입력",
-        placeholder="예: 005930.KS / NVDA / TSLA",
+        placeholder="예: 삼성전자 005930.KS / 엔비디아 NVDA / 테슬라 TSLA",
     )
 
     if direct_ticker.strip():
@@ -152,35 +165,57 @@ elif menu == "3. 기업 검색/주가 데이터":
         else:
             with st.spinner("주가 데이터 불러오는 중..."):
                 try:
-                    data = yf.download(ticker, period=period, progress=False)
+                    data = yf.download(
+                        ticker,
+                        period=period,
+                        progress=False,
+                        auto_adjust=True,
+                    )
 
                     if data.empty:
                         st.error("데이터를 불러오지 못했어. 티커를 다시 확인해줘.")
                     else:
-                        st.write(f"### {ticker} 주가 차트")
-                        st.line_chart(data["Close"])
+                        close = data["Close"]
 
-                        first_price = float(data["Close"].iloc[0])
-                        last_price = float(data["Close"].iloc[-1])
-                        high_price = float(data["Close"].max())
+                        if hasattr(close, "columns"):
+                            close = close.iloc[:, 0]
 
-                        return_rate = (last_price - first_price) / first_price * 100
-                        drawdown = (last_price - high_price) / high_price * 100
+                        close = close.dropna()
 
-                        st.write("### 핵심 지표")
-                        st.write(f"- 기간 첫 종가: {first_price:.2f}")
-                        st.write(f"- 최근 종가: {last_price:.2f}")
-                        st.write(f"- 기간 수익률: {return_rate:.2f}%")
-                        st.write(f"- 고점 대비 하락률: {drawdown:.2f}%")
+                        if len(close) < 2:
+                            st.error("분석할 수 있는 주가 데이터가 부족해.")
+                        else:
+                            first_price = float(close.iloc[0])
+                            last_price = float(close.iloc[-1])
+                            high_price = float(close.max())
+                            low_price = float(close.min())
 
-                        if st.button("이 주가 흐름 AI 해석"):
-                            prompt = f"""
+                            return_rate = (last_price - first_price) / first_price * 100
+                            drawdown = (last_price - high_price) / high_price * 100
+
+                            st.write(f"### {ticker} 핵심 주가 데이터")
+
+                            st.write("### 핵심 지표")
+                            st.write(f"- 기간 첫 종가: {first_price:.2f}")
+                            st.write(f"- 최근 종가: {last_price:.2f}")
+                            st.write(f"- 기간 최고 종가: {high_price:.2f}")
+                            st.write(f"- 기간 최저 종가: {low_price:.2f}")
+                            st.write(f"- 기간 수익률: {return_rate:.2f}%")
+                            st.write(f"- 고점 대비 하락률: {drawdown:.2f}%")
+
+                            st.write("### 최근 종가 데이터")
+                            st.dataframe(close.tail(10))
+
+                            if st.button("이 주가 흐름 AI 해석"):
+                                prompt = f"""
 다음 종목의 주가 흐름을 투자 리서치 관점에서 해석해줘.
 
 종목 코드: {ticker}
 조회 기간: {period}
 기간 첫 종가: {first_price:.2f}
 최근 종가: {last_price:.2f}
+기간 최고 종가: {high_price:.2f}
+기간 최저 종가: {low_price:.2f}
 기간 수익률: {return_rate:.2f}%
 고점 대비 하락률: {drawdown:.2f}%
 
@@ -193,12 +228,12 @@ elif menu == "3. 기업 검색/주가 데이터":
 
 단, 확정적인 매수/매도 추천은 하지 마.
 """
-                            response = client.chat.completions.create(
-                                model="gpt-4o-mini",
-                                messages=[{"role": "user", "content": prompt}],
-                            )
+                                response = client.chat.completions.create(
+                                    model="gpt-4o-mini",
+                                    messages=[{"role": "user", "content": prompt}],
+                                )
 
-                            st.write(response.choices[0].message.content)
+                                st.write(response.choices[0].message.content)
 
                 except Exception as e:
                     st.error("주가 데이터를 불러오는 중 오류가 발생했어.")
